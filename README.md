@@ -48,34 +48,75 @@ OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
 ### 3. Run Scripts
 
+**Quick Start with Unified Command:**
+
 ```bash
 # Activate environment first
 source .venv/bin/activate
 
+# Show all available commands
+python run.py help
+
 # Track hot stocks (basic - fast, no API costs)
-python stock_tracker.py
+python run.py track
 
 # Track hot stocks (AI - accurate, context-aware)
-python stock_tracker_llm.py -tm -pl 50
+python run.py track-ai -tm -pl 50
 
 # Analyze stock sentiment
+python run.py analyze AAPL
+
+# Analyze with AI on specific subreddits
+python run.py analyze-ai TSLA -s 1-5
+
+# Check your setup
+python run.py setup
+```
+
+**Or run scripts directly:**
+
+```bash
+python stock_tracker.py
+python stock_tracker_llm.py -tm -pl 50
 python sentiment_analyzer_llm.py AAPL -s 1-5
 ```
 
 ## Command Reference
+
+### Unified Interface (Recommended)
+
+The easiest way to use StockReddit is through the unified `run.py` script:
+
+```bash
+# Show help
+python run.py help
+
+# Track hot stocks
+python run.py track [OPTIONS]              # Basic version
+python run.py track-ai [OPTIONS]           # AI-powered version
+
+# Analyze sentiment
+python run.py analyze TICKER [OPTIONS]     # Basic version
+python run.py analyze-ai TICKER [OPTIONS]  # AI-powered version
+
+# Check setup
+python run.py setup
+```
 
 ### Script 1: Track Hot Stocks
 
 **Basic Version (Fast, Free):**
 
 ```bash
-python stock_tracker.py --timeframe day
+python run.py track --timeframe day
+# Or directly: python stock_tracker.py --timeframe day
 ```
 
 **AI Version (Accurate, Context-Aware):**
 
 ```bash
-python stock_tracker_llm.py [OPTIONS]
+python run.py track-ai [OPTIONS]
+# Or directly: python stock_tracker_llm.py [OPTIONS]
 
 Arguments:
   -t,  --timeframe {day,week,month}  Time period (default: day)
@@ -94,19 +135,19 @@ Arguments:
 
 ```bash
 # Test mode - analyze only r/wallstreetbets with 20 posts
-python stock_tracker_llm.py -tm -pl 20
+python run.py track-ai -tm -pl 20
 
 # Analyze top 3 subreddits with 50 posts each
-python stock_tracker_llm.py -s 1-3 -pl 50
+python run.py track-ai -s 1-3 -pl 50
 
 # Weekly analysis of specific subreddits
-python stock_tracker_llm.py -t week -s 1,3,5,7 -pl 100
+python run.py track-ai -t week -s 1,3,5,7 -pl 100
 
 # List available subreddits
-python stock_tracker_llm.py -ls
+python run.py track-ai -ls
 
 # Show available AI models
-python stock_tracker_llm.py -lm
+python run.py track-ai -lm
 ```
 
 ### Script 2: Analyze Stock Sentiment
@@ -114,13 +155,15 @@ python stock_tracker_llm.py -lm
 **Basic Version (Fast):**
 
 ```bash
-python sentiment_analyzer.py AAPL
+python run.py analyze AAPL
+# Or directly: python sentiment_analyzer.py AAPL
 ```
 
 **AI Version (Context-Aware):**
 
 ```bash
-python sentiment_analyzer_llm.py TICKER [OPTIONS]
+python run.py analyze-ai TICKER [OPTIONS]
+# Or directly: python sentiment_analyzer_llm.py TICKER [OPTIONS]
 
 Arguments:
   TICKER                          Stock ticker (e.g., AAPL, TSLA, GME)
@@ -135,16 +178,16 @@ Arguments:
 
 ```bash
 # Analyze AAPL sentiment across all subreddits
-python sentiment_analyzer_llm.py AAPL
+python run.py analyze-ai AAPL
 
 # Test mode - quick analysis of TSLA
-python sentiment_analyzer_llm.py TSLA -tm
+python run.py analyze-ai TSLA -tm
 
 # Analyze NVDA on specific subreddits
-python sentiment_analyzer_llm.py NVDA -s 1-3
+python run.py analyze-ai NVDA -s 1-3
 
 # Analyze GME with higher budget
-python sentiment_analyzer_llm.py GME -mr 500
+python run.py analyze-ai GME -mr 500
 ```
 
 ## Subreddit Selection
@@ -152,7 +195,8 @@ python sentiment_analyzer_llm.py GME -mr 500
 **View Available Subreddits:**
 
 ```bash
-python stock_tracker_llm.py -ls
+python run.py track-ai -ls
+# Or: python stock_tracker_llm.py -ls
 ```
 
 **Output:**
@@ -266,7 +310,7 @@ sqlite3 stocks.db "SELECT * FROM stock_mentions WHERE ticker='AAPL' ORDER BY tim
 
 ```bash
 # Test with minimal requests
-python stock_tracker_llm.py -tm -pl 10 -tc 5
+python run.py track-ai -tm -pl 10 -tc 5
 
 # Expected: ~15 requests
 ```
@@ -275,10 +319,10 @@ python stock_tracker_llm.py -tm -pl 10 -tc 5
 
 ```bash
 # Medium test
-python stock_tracker_llm.py -tm -pl 50 -tc 25
+python run.py track-ai -tm -pl 50 -tc 25
 
 # Full production
-python stock_tracker_llm.py -s 1-5 -pl 100
+python run.py track-ai -s 1-5 -pl 100
 ```
 
 ### Monitor Budget
@@ -317,7 +361,7 @@ Some free AI models may occasionally fail:
 
 ## Troubleshooting
 
-**"No module named 'praw'":**
+**"No module named 'praw'" or "No module named 'setup_checker'":**
 
 ```bash
 source .venv/bin/activate
@@ -325,6 +369,11 @@ pip install -r requirements.txt
 ```
 
 **"Reddit API credentials not found":**
+
+```bash
+# Check your setup
+python run.py setup
+```
 
 - Check `.env` file exists in project root
 - Verify credentials are correct
@@ -360,7 +409,8 @@ Found a bug or want to add features? Pull requests welcome!
 
 For issues:
 
-1. Check this README first
-2. Verify API credentials in `.env`
-3. Try test mode first: `-tm -pl 10`
-4. Check GitHub issues
+1. Check your setup: `python run.py setup`
+2. Check this README
+3. Verify API credentials in `.env`
+4. Try test mode first: `python run.py track-ai -tm -pl 10`
+5. Check GitHub issues
