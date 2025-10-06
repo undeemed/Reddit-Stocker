@@ -1,0 +1,38 @@
+SETUP INSTRUCTIONS FOR STOCKREDDIT
+===================================
+
+1. Install Python dependencies:
+   pip install -r requirements.txt
+
+2. Get Reddit API Credentials:
+   a. Go to: https://www.reddit.com/prefs/apps
+   b. Scroll down and click "Create App" or "Create Another App"
+   c. Fill in:
+      - name: StockReddit (or any name you like)
+      - type: Select "script"
+      - description: Stock sentiment analysis tool
+      - about url: (leave blank)
+      - redirect uri: http://localhost:8080
+   d. Click "Create app"
+   e. Copy the client ID (under your app name)
+   f. Copy the client secret (labeled "secret")
+
+3. Create a .env file in the project root:
+   REDDIT_CLIENT_ID=your_client_id_here
+   REDDIT_CLIENT_SECRET=your_client_secret_here
+   REDDIT_USER_AGENT=StockReddit/1.0
+
+4. Run the scripts:
+   
+   Track hot stocks:
+   python stock_tracker.py --timeframe day
+   
+   Analyze sentiment:
+   python sentiment_analyzer.py AAPL
+
+NOTES:
+- The database (stocks.db) will be created automatically on first run
+- Reddit API has rate limits (~60 requests per minute for script apps)
+- The scripts use parallel processing to speed up data collection
+- Results are stored in SQLite for efficient querying
+
