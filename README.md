@@ -1,4 +1,4 @@
-# StockReddit - AI-Powered Reddit Stock Sentiment Analyzer
+# Reddit Stocker - AI-Powered Reddit Stock Sentiment Analyzer
 
 Track hot stocks and analyze sentiment across Reddit's top investing subreddits with context-aware AI.
 
