@@ -1,36 +1,37 @@
-# Environment variables
-.env
-
-# Database
-*.db
-
-# Ticker cache
-valid_tickers_cache.json
-
-# Request budget tracking
-request_budget.json
-
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
 .venv/
+venv/
 ENV/
-build/
-dist/
-*.egg-info/
+env/
+
+# Database
+stocks.db
+*.db
+
+# Cache
+valid_tickers_cache.json
+request_budget.json
+
+# Environment
+.env
+.env.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# Convex
+node_modules/
+.convex/
 
 # OS
 .DS_Store
 Thumbs.db
-

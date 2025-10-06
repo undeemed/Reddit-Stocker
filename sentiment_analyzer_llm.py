@@ -214,7 +214,7 @@ def analyze_stock_sentiment_llm(
                 subreddit = future_to_subreddit[future]
                 print(f"✗ Error processing r/{subreddit}: {e}")
     
-    # Display results
+    # Calculate statistics
     if not all_sentiments:
         print(f"\n⚠ No recent mentions found for ${ticker}\n")
         return
@@ -225,6 +225,69 @@ def analyze_stock_sentiment_llm(
     positive_count = sum(1 for s in sentiment_scores if s > 0.05)
     negative_count = sum(1 for s in sentiment_scores if s < -0.05)
     neutral_count = len(sentiment_scores) - positive_count - negative_count
+    
+    # Save to Convex (if configured)
+    try:
+        import os
+        from collections import Counter
+        if os.getenv('CONVEX_URL'):
+            from convex_client import StockConvexClient
+            
+            client = StockConvexClient()
+            
+            # Build subreddit mentions
+            subreddit_counter = Counter()
+            for s in all_sentiments:
+                subreddit_counter[s['subreddit']] += 1
+            
+            subreddit_mentions = [
+                {"subreddit": sub, "count": count}
+                for sub, count in subreddit_counter.items()
+            ]
+            
+            # Compile AI context from top posts
+            top_posts = sorted(all_sentiments, key=lambda x: x['score'], reverse=True)[:5]
+            ai_context_parts = []
+            for post in top_posts:
+                if post.get('llm_context'):
+                    ai_context_parts.append(f"[{post['subreddit']}] {post['llm_context']}")
+            
+            ai_context = " | ".join(ai_context_parts) if ai_context_parts else None
+            
+            # Prepare raw posts for re-evaluation
+            raw_posts = [
+                {
+                    "postId": s['post_id'],
+                    "subreddit": s['subreddit'],
+                    "title": s['title'],
+                    "text": s.get('text', ''),
+                    "score": s['score'],
+                    "sentiment": s['sentiment'],
+                    "llmContext": s.get('llm_context'),
+                }
+                for s in all_sentiments
+            ]
+            
+            # Save to Convex
+            client.save_analysis(
+                ticker=ticker,
+                timeframe="day",
+                total_mentions=len(all_sentiments),
+                subreddit_mentions=subreddit_mentions,
+                average_sentiment=avg_sentiment,
+                sentiment_breakdown={
+                    "positive": positive_count,
+                    "neutral": neutral_count,
+                    "negative": negative_count,
+                },
+                ai_context=ai_context,
+                raw_posts=raw_posts
+            )
+            print(f"\n✓ Sentiment data saved to Convex for ${ticker}")
+    except Exception as e:
+        # Silently ignore if Convex not configured
+        if 'CONVEX_URL not found' not in str(e):
+            print(f"⚠ Convex save skipped: {e}")
     
     print(f"\n{'='*60}")
     print(f"SENTIMENT ANALYSIS RESULTS - ${ticker}")

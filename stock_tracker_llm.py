@@ -125,7 +125,9 @@ def track_hot_stocks_llm(
     post_limit: int = 100,
     comments_per_post: int = 5,
     top_comments: int = 50,
-    batch_size: int = 5
+    batch_size: int = 50,
+    analyze_sentiment: bool = False,
+    analyze_top_n: int = 3
 ):
     """Track hot stocks using LLM-based extraction."""
     if model_manager is None:
@@ -190,11 +192,44 @@ def track_hot_stocks_llm(
                 subreddit = future_to_subreddit[future]
                 print(f"✗ Error processing r/{subreddit}: {e}")
     
-    # Save to database
+    # Save to SQLite database
     if subreddit_data:
         print(f"\nSaving {len(subreddit_data)} records to database...")
         save_stock_mentions(subreddit_data)
-        print("✓ Data saved successfully")
+        print("✓ Data saved to SQLite")
+    
+    # Save to Convex (if configured)
+    try:
+        import os
+        if os.getenv('CONVEX_URL'):
+            from convex_client import StockConvexClient
+            print("\nSaving to Convex...")
+            
+            client = StockConvexClient()
+            for ticker, count in all_tickers.most_common(10):
+                # Build subreddit mentions
+                subreddit_mentions = []
+                for subreddit in subreddits:
+                    # Find count in subreddit_data
+                    for t, sub, c, tf in subreddit_data:
+                        if t == ticker and sub == subreddit:
+                            subreddit_mentions.append({"subreddit": sub, "count": c})
+                            break
+                
+                # Save to Convex
+                client.save_analysis(
+                    ticker=ticker,
+                    timeframe=timeframe,
+                    total_mentions=count,
+                    subreddit_mentions=subreddit_mentions,
+                    average_sentiment=0.0,  # Will be updated by sentiment analyzer
+                    sentiment_breakdown={"positive": 0, "neutral": 0, "negative": 0}
+                )
+            print("✓ Data saved to Convex")
+    except Exception as e:
+        # Silently ignore if Convex not configured
+        if 'CONVEX_URL not found' not in str(e):
+            print(f"⚠ Convex save skipped: {e}")
     
     # Display results
     print(f"\n{'='*60}")
@@ -212,6 +247,26 @@ def track_hot_stocks_llm(
         print("No stocks found. Check your API credentials.")
     
     print(f"\n{'='*60}\n")
+    
+    # Auto-analyze sentiment for top stocks if requested
+    if analyze_sentiment and top_stocks:
+        print(f"🔍 Auto-analyzing sentiment for top {analyze_top_n} stocks...\n")
+        
+        from sentiment_analyzer_llm import analyze_stock_sentiment_llm
+        
+        for ticker, count in top_stocks[:analyze_top_n]:
+            print(f"Analyzing {ticker}...")
+            try:
+                analyze_stock_sentiment_llm(
+                    ticker=ticker,
+                    model_manager=model_manager,
+                    test_mode=test_mode,
+                    subreddit_selection=subreddit_selection
+                )
+            except Exception as e:
+                print(f"⚠ Error analyzing {ticker}: {e}")
+        
+        print(f"\n✓ Completed sentiment analysis for top {analyze_top_n} stocks")
     
     return top_stocks
 
@@ -270,13 +325,24 @@ def main():
     parser.add_argument(
         '-bs', '--batch-size',
         type=int,
-        default=5,
-        help='Comments to batch per LLM request (default: 5)'
+        default=50,
+        help='Comments to batch per LLM request (default: 50, max: 100)'
     )
     parser.add_argument(
         '-lm', '--list-models',
         action='store_true',
         help='List available models'
+    )
+    parser.add_argument(
+        '-as', '--analyze-sentiment',
+        action='store_true',
+        help='Auto-analyze sentiment for top stocks after tracking'
+    )
+    parser.add_argument(
+        '-an', '--analyze-top-n',
+        type=int,
+        default=3,
+        help='Number of top stocks to analyze (default: 3, requires -as)'
     )
     
     args = parser.parse_args()
@@ -317,7 +383,9 @@ def main():
             post_limit=args.post_limit,
             comments_per_post=args.comments_per_post,
             top_comments=args.top_comments,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            analyze_sentiment=args.analyze_sentiment,
+            analyze_top_n=args.analyze_top_n
         )
     except KeyboardInterrupt:
         print("\n\nTracking interrupted by user.")

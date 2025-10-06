@@ -38,8 +38,16 @@ COMMANDS:
     analyze TICKER     Analyze sentiment for a stock (basic, fast)
     analyze-ai TICKER  Analyze sentiment with AI context (accurate)
 
+  🗄️  Convex Database:
+    convex-test        Test Convex connection
+    convex-list        List all analyses (sorted by sentiment)
+                         -m: sort by mentions | -t: filter timeframe
+    convex-show TICKER Show detailed analysis for a ticker
+    convex-reeval TICKER Re-evaluate stock with AI
+
   📋 Utilities:
     setup              Run setup checker
+    budget            Set or view daily LLM request budget
     help               Show this help message
 
 EXAMPLES:
@@ -61,6 +69,13 @@ EXAMPLES:
 
   # Show AI models
   python run.py track-ai -lm
+
+  # Convex database operations
+  python run.py convex-test
+  python run.py convex-list           # Sorted by sentiment
+  python run.py convex-list -m        # Sorted by mentions
+  python run.py convex-show AAPL
+  python run.py convex-reeval AAPL
 
 FOR MORE OPTIONS:
     python run.py track --help
@@ -132,6 +147,87 @@ def main():
                 print("  • python run.py analyze AAPL")
                 print("  • python run.py analyze-ai AAPL\n")
             sys.exit(0 if is_setup else 1)
+
+        elif command == 'budget':
+            # Set or view daily LLM request budget
+            import argparse
+            from llm_manager import MultiModelManager
+            parser = argparse.ArgumentParser(description='Set or view daily LLM request budget')
+            parser.add_argument('-s', '--set', type=int, help='Set daily request budget (e.g., 500)')
+            parser.add_argument('-r', '--reset', action='store_true', help='Reset usage counters for the new day')
+            args = parser.parse_args(sys.argv[1:])
+
+            manager = MultiModelManager()
+            if args.set is not None:
+                try:
+                    manager.set_limit(args.set)
+                    print(f"✅ Budget limit set to {args.set} requests/day")
+                except Exception as e:
+                    print(f"❌ Failed to set budget: {e}")
+                    sys.exit(1)
+            if args.reset:
+                manager.reset_budget()
+                print("✅ Budget usage reset for the new day")
+            # Always show current status
+            print(f"Current budget: {manager.get_stats()}")
+            sys.exit(0)
+        
+        elif command == 'convex-test':
+            # Test Convex connection
+            from convex_client import test_convex_connection
+            test_convex_connection()
+        
+        elif command == 'convex-list':
+            # List Convex analyses
+            from convex_tracker import list_convex_analyses
+            
+            # Parse args for sorting
+            import argparse
+            parser = argparse.ArgumentParser()
+            parser.add_argument('-t', '--timeframe', help='Filter by timeframe')
+            parser.add_argument('-l', '--limit', type=int, default=20, help='Result limit')
+            parser.add_argument('-m', '--sort-mentions', action='store_true', help='Sort by mentions')
+            parser.add_argument('-s', '--sort-sentiment', action='store_true', help='Sort by sentiment')
+            args = parser.parse_args(sys.argv[1:])
+            
+            sort_by = 'mentions' if args.sort_mentions else 'sentiment'
+            list_convex_analyses(timeframe=args.timeframe, limit=args.limit, sort_by=sort_by)
+        
+        elif command == 'convex-show':
+            # Show Convex analysis
+            if len(sys.argv) < 2:
+                print("\n❌ Error: Missing ticker symbol")
+                print("Usage: python run.py convex-show TICKER")
+                print("Example: python run.py convex-show AAPL\n")
+                sys.exit(1)
+            from convex_tracker import show_convex_analysis
+            ticker = sys.argv[1].upper()
+            show_convex_analysis(ticker)
+        
+        elif command == 'convex-reeval':
+            # Re-evaluate with AI
+            if len(sys.argv) < 2:
+                print("\n❌ Error: Missing ticker symbol")
+                print("Usage: python run.py convex-reeval TICKER")
+                print("Example: python run.py convex-reeval AAPL\n")
+                sys.exit(1)
+            from convex_tracker import revaluate_stock
+            from llm_manager import MultiModelManager
+            import os
+            from setup_checker import check_setup, prompt_openrouter_setup
+            
+            is_setup, message = check_setup()
+            if not is_setup:
+                print(message)
+                sys.exit(1)
+            
+            if not os.getenv('OPENROUTER_API_KEY'):
+                print(prompt_openrouter_setup())
+                sys.exit(1)
+            
+            ticker = sys.argv[1].upper()
+            model_manager = MultiModelManager()
+            revaluate_stock(ticker, model_manager)
             
         else:
             print(f"\n❌ Unknown command: {command}")
@@ -140,6 +236,10 @@ def main():
             print("  • track-ai       - Track hot stocks (AI-powered)")
             print("  • analyze        - Analyze sentiment (basic)")
             print("  • analyze-ai     - Analyze sentiment (AI-powered)")
+            print("  • convex-test    - Test Convex connection")
+            print("  • convex-list    - List Convex analyses")
+            print("  • convex-show    - Show Convex analysis")
+            print("  • convex-reeval  - Re-evaluate with AI")
             print("  • setup          - Check configuration")
             print("  • help           - Show help")
             print("\nRun 'python run.py help' for more information\n")

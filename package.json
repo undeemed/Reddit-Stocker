@@ -1,0 +1,13 @@
+{
+  "name": "stockreddit",
+  "version": "1.0.0",
+  "description": "AI-Powered Reddit Stock Sentiment Analyzer with Convex Backend",
+  "scripts": {
+    "dev": "convex dev"
+  },
+  "dependencies": {
+    "convex": "^1.17.2"
+  },
+  "devDependencies": {}
+}
+

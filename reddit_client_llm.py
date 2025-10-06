@@ -1,12 +1,14 @@
 """
-Reddit API client with LLM-enhanced extraction.
-Uses Reddit's native comment sorting and batch analysis for efficiency.
+Reddit API client with AGGREGATED LLM extraction.
+Sends 20-40 posts per request (60-80K tokens) with concise aggregated output.
 """
 from typing import Any
 from collections import Counter
 from ticker_validator import fetch_valid_tickers
-from llm_extractor import extract_tickers_with_llm, extract_tickers_batch
+from llm_extractor_aggregated import extract_tickers_aggregated
 from reddit_client import get_reddit_client
+from comment_filter import filter_comments
+from post_filter import should_analyze_post, batch_posts_by_tokens, estimate_token_count
 
 
 def get_subreddit_tickers_llm(
@@ -15,23 +17,11 @@ def get_subreddit_tickers_llm(
     limit: int = 100,
     comments_per_post: int = 5,
     global_top_comments: int = 50,
-    batch_size: int = 5,
+    batch_size: int = 50,
     model_manager: Any = None
 ) -> Counter:
     """
-    Analyze posts + top comments using Reddit's native sorting.
-    
-    Args:
-        subreddit_name: Subreddit to analyze
-        timeframe: 'day', 'week', or 'month'
-        limit: Number of posts to fetch
-        comments_per_post: Top N comments to fetch per post (Reddit-sorted)
-        global_top_comments: After collection, analyze top X globally
-        batch_size: Comments to batch per LLM request
-        model_manager: MultiModelManager instance
-    
-    Returns:
-        Counter object with ticker mention counts
+    Analyze subreddit using AGGREGATED batching (60-80K tokens per request).
     """
     reddit = get_reddit_client()
     subreddit = reddit.subreddit(subreddit_name)
@@ -43,23 +33,45 @@ def get_subreddit_tickers_llm(
     
     print(f"  Fetching {limit} posts from r/{subreddit_name}...")
     
-    # Phase 1: Collect posts and top comments
+    # Phase 1: Collect posts with pre-filtering
     all_posts = []
     top_comments_collected = []
+    filtered_flairs = 0
+    filtered_low_score = 0
+    filtered_no_tickers = 0
+    
+    SKIP_FLAIRS = ['gain', 'loss', 'gain/loss', 'gains', 'losses', 'meme']
     
     try:
-        for post in subreddit.top(time_filter=time_filter, limit=limit):
+        for post in subreddit.top(time_filter=time_filter, limit=limit * 3):
+            if len(all_posts) >= limit:
+                break
+            
+            # Filter by flair
+            flair = (post.link_flair_text or '').lower()
+            if any(skip_flair in flair for skip_flair in SKIP_FLAIRS):
+                filtered_flairs += 1
+                continue
+            
+            # Pre-filter: Check upvotes and likely ticker presence
+            if post.score < 10:
+                filtered_low_score += 1
+                continue
+            
+            if not should_analyze_post(post, min_score=10):
+                filtered_no_tickers += 1
+                continue
+            
             all_posts.append(post)
             
-            # Use Reddit's native sorting!
+            # Collect comments
             post.comment_sort = 'top'
             post.comments.replace_more(limit=0)
             
-            # Get top N comments per post (already sorted by Reddit!)
             post_top_comments = post.comments.list()[:comments_per_post]
             
             for comment in post_top_comments:
-                if len(comment.body) > 20:  # Filter trivial comments
+                if len(comment.body) > 20:
                     top_comments_collected.append({
                         'body': comment.body,
                         'score': comment.score,
@@ -70,103 +82,101 @@ def get_subreddit_tickers_llm(
         print(f"Error fetching posts: {e}")
         return ticker_counter
     
+    # Report filtering stats
+    total_filtered = filtered_flairs + filtered_low_score + filtered_no_tickers
+    if total_filtered > 0:
+        print(f"  📊 Pre-filter: {len(all_posts)} posts kept, {total_filtered} filtered")
+        print(f"     └─ Flair: {filtered_flairs}, Low score: {filtered_low_score}, No tickers: {filtered_no_tickers}")
     print(f"  Collected {len(all_posts)} posts, {len(top_comments_collected)} comments")
     
-    # Phase 2a: Analyze ALL posts with LLM
-    posts_analyzed = 0
+    # Phase 2: AGGREGATED POST ANALYSIS (60-80K tokens per request)
+    print(f"  Creating aggregated batches (60-80K tokens each)...")
+    
+    post_texts = []
     for post in all_posts:
+        text = f"TITLE: {post.title}\n\nBODY: {post.selftext}"
+        if len(text.strip()) > 10:
+            post_texts.append(text)
+    
+    # Batch to 60-80K tokens (leaving room for reasoning)
+    post_batches = batch_posts_by_tokens(post_texts, max_tokens=75000)
+    
+    if post_batches:
+        total_tokens_estimate = sum(estimate_token_count(p) for p in post_texts)
+        print(f"  Created {len(post_batches)} batches (~{total_tokens_estimate:,} tokens total)")
+    
+    for batch_idx, batch in enumerate(post_batches):
         if model_manager.check_budget() <= 0:
-            print(f"⚠️  Budget exhausted at {posts_analyzed} posts")
+            print(f"⚠️  Budget exhausted at batch {batch_idx+1}/{len(post_batches)}")
             break
         
-        text = f"{post.title}\n\n{post.selftext}"
-        if len(text.strip()) > 10:
-            result = extract_tickers_with_llm(text, model_manager, valid_tickers)
-            if result.get('budget_exhausted'):
-                break
-            if result['tickers']:
-                ticker_counter.update(result['tickers'])
-                posts_analyzed += 1
+        batch_tokens = sum(estimate_token_count(p) for p in batch)
+        print(f"    Batch {batch_idx+1}/{len(post_batches)}: {len(batch)} posts, ~{batch_tokens:,} tokens...", end='', flush=True)
+        
+        # Send batch and get AGGREGATED result
+        result = extract_tickers_aggregated(batch, model_manager, valid_tickers)
+        
+        if not result or not result.get('tickers'):
+            print(f" no results")
+            continue
+        
+        # Update counter with aggregated mentions
+        for ticker, data in result['tickers'].items():
+            mentions = data.get('mentions', 1)
+            ticker_counter[ticker] += mentions
+        
+        print(f" ✓ Found {len(result['tickers'])} tickers (saved {len(batch)-1} calls)")
     
-    print(f"  Analyzed {posts_analyzed} posts")
+    print(f"  ✓ Analyzed {len(post_texts)} posts in {len(post_batches)} API requests")
     
-    # Phase 2b: Re-sort comments globally and take top X
+    # Phase 3: AGGREGATED COMMENT ANALYSIS
     sorted_comments = sorted(
         top_comments_collected,
         key=lambda c: c['score'],
         reverse=True
     )[:global_top_comments]
     
-    print(f"  Analyzing top {len(sorted_comments)} comments globally (highest upvotes)")
+    # Filter comments
+    quality_comments, filter_stats = filter_comments(sorted_comments, min_length=40, verbose=True)
     
-    # Phase 2c: Batch analyze comments
-    batch = []
-    batch_texts = []
-    comments_analyzed = 0
-    
-    for comment in sorted_comments:
-        if model_manager.check_budget() <= 0:
-            break
+    if quality_comments:
+        print(f"  Analyzing {len(quality_comments)} quality comments...")
         
-        if len(comment['body']) < 300:  # Short comment - batch it
-            batch.append(comment)
-            batch_texts.append(comment['body'])
-            
-            if len(batch) >= batch_size:
-                # Batch LLM request
-                results = extract_tickers_batch(batch_texts, model_manager, valid_tickers)
-                if any(r.get('budget_exhausted') for r in results):
-                    break
-                
-                for result in results:
-                    if result['tickers']:
-                        ticker_counter.update(result['tickers'])
-                        comments_analyzed += 1
-                
-                print(f"    Batched {len(batch)} comments in 1 request (saved {len(batch)-1} calls)")
-                batch = []
-                batch_texts = []
+        # Batch comments to 60-80K tokens
+        comment_texts = [c['body'] for c in quality_comments]
+        comment_batches = batch_posts_by_tokens(comment_texts, max_tokens=75000)
         
-        else:  # Long comment - analyze separately
-            result = extract_tickers_with_llm(comment['body'], model_manager, valid_tickers)
-            if result.get('budget_exhausted'):
+        for batch_idx, batch in enumerate(comment_batches):
+            if model_manager.check_budget() <= 0:
                 break
-            if result['tickers']:
-                ticker_counter.update(result['tickers'])
-                comments_analyzed += 1
+            
+            batch_tokens = sum(estimate_token_count(c) for c in batch)
+            print(f"    Comment batch {batch_idx+1}: {len(batch)} comments, ~{batch_tokens:,} tokens...", end='', flush=True)
+            
+            result = extract_tickers_aggregated(batch, model_manager, valid_tickers)
+            
+            if result and result.get('tickers'):
+                for ticker, data in result['tickers'].items():
+                    mentions = data.get('mentions', 1)
+                    ticker_counter[ticker] += mentions
+                
+                print(f" ✓ Found {len(result['tickers'])} tickers")
+            else:
+                print(f" no results")
     
-    # Process remaining batch
-    if batch and model_manager.check_budget() > 0:
-        results = extract_tickers_batch(batch_texts, model_manager, valid_tickers)
-        for result in results:
-            if result['tickers']:
-                ticker_counter.update(result['tickers'])
-                comments_analyzed += 1
-    
-    print(f"  Analyzed {comments_analyzed} comments")
     print(f"  📊 Budget: {model_manager.get_stats()}")
     
     return ticker_counter
 
 
+# Keep original function name for compatibility
 def get_ticker_sentiment_llm(
     subreddit_name: str,
     ticker: str,
     limit: int = 50,
     model_manager: Any = None
 ) -> list:
-    """
-    Get posts mentioning a ticker with LLM-extracted context.
-    
-    Args:
-        subreddit_name: Name of the subreddit
-        ticker: Stock ticker to search for
-        limit: Maximum number of posts to fetch
-        model_manager: MultiModelManager instance
-    
-    Returns:
-        List of posts with LLM-extracted context
-    """
+    """Get sentiment using aggregated analysis."""
     reddit = get_reddit_client()
     subreddit = reddit.subreddit(subreddit_name)
     
@@ -174,46 +184,28 @@ def get_ticker_sentiment_llm(
     posts = []
     
     try:
-        # Search for ticker
-        for post in subreddit.search(ticker, time_filter='week', limit=limit):
-            if model_manager.check_budget() <= 0:
-                break
-                
-            text = f"{post.title}\n\n{post.selftext}"
-            
-            # Use LLM to verify and extract context
-            result = extract_tickers_with_llm(text, model_manager, valid_tickers)
-            
-            if ticker in result['tickers']:
-                posts.append({
-                    'id': post.id,
-                    'title': post.title,
-                    'text': text,
-                    'score': post.score,
-                    'url': post.url,
-                    'llm_context': result['context'].get(ticker, '')
-                })
+        SKIP_FLAIRS = ['gain', 'loss', 'gain/loss', 'gains', 'losses', 'meme']
         
-        # Also check hot posts
-        for post in subreddit.hot(limit=limit):
+        for post in subreddit.search(ticker, time_filter='week', limit=limit * 2):
             if model_manager.check_budget() <= 0:
                 break
+            
+            flair = (post.link_flair_text or '').lower()
+            if any(skip_flair in flair for skip_flair in SKIP_FLAIRS):
+                continue
                 
             text = f"{post.title}\n\n{post.selftext}"
-            result = extract_tickers_with_llm(text, model_manager, valid_tickers)
             
-            if ticker in result['tickers']:
-                if not any(p['id'] == post.id for p in posts):
-                    posts.append({
-                        'id': post.id,
-                        'title': post.title,
-                        'text': text,
-                        'score': post.score,
-                        'url': post.url,
-                        'llm_context': result['context'].get(ticker, '')
-                    })
+            posts.append({
+                'id': post.id,
+                'title': post.title,
+                'text': text,
+                'score': post.score,
+                'url': post.url,
+            })
     
     except Exception as e:
-        print(f"Error fetching ticker posts from r/{subreddit_name}: {e}")
+        print(f"Error searching: {e}")
     
     return posts
+
