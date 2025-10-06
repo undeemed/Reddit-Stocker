@@ -1,4 +1,4 @@
-# StockReddit - AI-Powered Reddit Stock Sentiment Analyzer
+# Reddit Stocker - AI-Powered Reddit Stock Sentiment Analyzer
 
 Track hot stocks and analyze sentiment across Reddit's top investing subreddits with context-aware AI and optional cloud storage.
 
@@ -26,7 +26,7 @@ Track hot stocks and analyze sentiment across Reddit's top investing subreddits 
 
 ## Quick Start
 
-### 1. Setup
+### 1. Setup - download zip and open
 
 ```bash
 # Create virtual environment
